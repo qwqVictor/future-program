@@ -1,11 +1,12 @@
 #include <iostream>
 #include <unordered_map>
 #include <string>
+#include <sstream>
 #include <queue>
 #include <deque>
+#include <stack>
 #include <cstdint>
 #include <vector>
-#include <regex>
 
 namespace CPlus {
     constexpr int strippedLineLength = 3;
