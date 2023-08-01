@@ -7,6 +7,7 @@
 #include <stack>
 #include <cstdint>
 #include <vector>
+#include <regex>
 
 namespace CPlus {
     constexpr int strippedLineLength = 3;
