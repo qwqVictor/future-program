@@ -150,6 +150,15 @@ namespace CPlus {
     constexpr int GlobalObjectsNilBaseOffset = 0;
     constexpr int GlobalVariablesInitialBaseOffset = 1;
     constexpr int NullPointer = 0;
+
+    class CompileError : public std::runtime_error {
+    public:
+        CompileError(std::string&& message) : std::runtime_error(message) {}
+    };
+    class RuntimeError : public std::runtime_error {
+    public:
+        RuntimeError(std::string&& message) : std::runtime_error(message) {}
+    };
 }
 
 namespace Utilities {
@@ -239,7 +248,7 @@ private:
     int ptr;
 
     // 初步解析 token，进行简单的 token 分类，形成最初的词素
-    bool parseTokens() {
+    void parseTokens() {
         Tokenizer& tokenizer = *(this->tokenizer);
         for (std::string token; tokenizer.hasNextToken();) {
             token = tokenizer.nextToken();
@@ -264,11 +273,11 @@ private:
             }
             lexemes.push_back(lexeme);
         }
-        return true;
     }
 
     // 二次解析词素，消除词素的二义性
-    bool resolveLexemeTypes() {
+    void resolveLexemeTypes() {
+        std::stringstream err;
         // 使用栈记录小括号和花括号，从而判断其含义
         std::stack<Lexeme> parenStack, bracketStack;
         // 记录上一次的控制字符，这会影响"()"的含义
@@ -300,8 +309,10 @@ private:
                 case CPlus::PlusOrPositive:
                 case CPlus::MinusOrNegative:
                     // "+"、"-" 不可能在开头出现
-                    if (!i)
-                        return false;
+                    if (!i) {
+                        err << "Found + or - at position 0";
+                        throw CPlus::CompileError(err.str());
+                    }
                     lexeme.type = CPlus::Operator;
                     // 如果左侧的词素是 symbol/operator，且不是")"、"]"，则必为正负含义，否则为加减
                     if ((lexemes[i - 1].type == CPlus::Operator && lexemes[i - 1].value != CPlus::RightParen) ||
@@ -312,8 +323,10 @@ private:
                     }
                     break;
                 case CPlus::LeftParen:
-                    if (!i)
-                        return false;
+                    if (!i) {
+                        err << "Found ( at position 0";
+                        throw CPlus::CompileError(err.str());
+                    }
                     // 如果左侧相邻词素是标识符，则必为函数调用或声明
                     if (lexemes[i - 1].type == CPlus::Identifier)
                         lexeme.type = CPlus::Symbol, lexeme.value = CPlus::FunctionCallDefBegin;
@@ -329,8 +342,8 @@ private:
                 case CPlus::RightParen: {
                     // 若栈为空则括号不匹配，不合法
                     if (parenStack.empty()) {
-                        std::cerr << "Unmatching paren at lexeme " << i << "." << std::endl;
-                        return false;
+                        err << "Unmatching paren at lexeme " << i << ".";
+                        throw CPlus::CompileError(err.str());
                     }
                     Lexeme& correspondent = parenStack.top();
                     // 取栈顶对应的左括号判断
@@ -358,8 +371,8 @@ private:
                 } break;
                 case CPlus::RightBracket: {
                     if (bracketStack.empty()) {
-                        std::cerr << "Unmatching bracket at lexeme " << i << "." << std::endl;
-                        return false;
+                        err << "Unmatching bracket at lexeme " << i << ".";
+                        throw CPlus::CompileError(err.str());
                     }
                     Lexeme& correspondent = bracketStack.top();
                     lexeme.type = CPlus::Symbol;
@@ -392,7 +405,6 @@ private:
                 break;
             }
         }
-        return true;
     }
 
 public:
@@ -418,14 +430,11 @@ public:
         return this->analyzed;
     }
 
-    bool analyze() {
-        if (this->analyzed) {
-            return false;
-        }
+    void analyze() {
+        if (this->analyzed) return;
+        this->parseTokens();
+        this->resolveLexemeTypes();
         this->analyzed = true;
-        if (!this->parseTokens()) return false;
-        if (!this->resolveLexemeTypes()) return false;
-        return true;
     }
 
     std::vector<Lexeme>& getLexemesRef() { return this->lexemes; }
@@ -804,6 +813,7 @@ public:
     static std::pair<std::shared_ptr<IdentifierASTNode>, std::shared_ptr<Function> > functionAnalyze(
                                                     std::vector<LexicalAnalyzer::Lexeme>& lexemes,
                                                     size_t& ptr, std::shared_ptr<Scope> const& scope) {
+        std::stringstream err;
         std::shared_ptr<IdentifierASTNode> funcIdentifier = nullptr;
         std::shared_ptr<Function> func = nullptr;
         int id = 0;
@@ -849,12 +859,15 @@ public:
                     }
                     break;
                 default:
-                    std::cerr << "Unexpected lexeme in function analyze at " << ptr << std::endl;
+                    err << "Unexpected lexeme in function analyze at " << ptr;
+                    throw CPlus::CompileError(err.str());
                     break;
             }
         }
-        if (func == nullptr)
-            std::cerr << "Unknown problem causes func to be null!" << std::endl;
+        if (func == nullptr) {
+            err << "Unknown problem causes func to be null!";
+            throw CPlus::CompileError(err.str());
+        }
         return std::make_pair(std::move(funcIdentifier), std::move(func));
     }
 
@@ -866,6 +879,7 @@ public:
                                                           bool onlyOneStatement = false, // 是否只解析一条语句（用于 if、for、while 等语句块）
                                                           bool forceBlock = false   // 强制返回语句块
                                                           ) {
+        std::stringstream err;
         std::vector<std::shared_ptr<BaseASTNode> > statements;
         // 为了变量回收，需要记录语句块中直接声明的变量内存
         uint32_t maxSize = 0;
@@ -925,8 +939,8 @@ public:
                         case CPlus::If: {
                             LexicalAnalyzer::Lexeme& cbBegin = lexemes[++ptr];
                             if (cbBegin.type != CPlus::Symbol || cbBegin.value != CPlus::ControlBlockBegin) {
-                                std::cerr << "Expecting ( at lexeme " << ptr << " for if stmt" << std::endl;
-                                return nullptr;
+                                err << "Expecting ( at lexeme " << ptr << " for if stmt";
+                                throw CPlus::CompileError(err.str());
                             }
                             ptr++;
                             std::shared_ptr<BaseASTNode> condition = std::move(expressionAnalyze(lexemes, ptr, scope));
@@ -945,16 +959,16 @@ public:
                                     lastIf = nullptr;
                             }
                             else {
-                                std::cerr << "Standalone else found at lexeme " << ptr - 1 << std::endl;
-                                return nullptr;
+                                err << "Standalone else found at lexeme " << ptr - 1;
+                                throw CPlus::CompileError(err.str());
                             }
                         } break;
 
                         case CPlus::While: {
                             LexicalAnalyzer::Lexeme& cbBegin = lexemes[++ptr];
                             if (cbBegin.type != CPlus::Symbol || cbBegin.value != CPlus::ControlBlockBegin) {
-                                std::cerr << "Expecting ( at lexeme " << ptr << " for if stmt" << std::endl;
-                                return nullptr;
+                                err << "Expecting ( at lexeme " << ptr << " for if stmt";
+                                throw CPlus::CompileError(err.str());
                             }
                             ptr++;
                             std::shared_ptr<BaseASTNode> condition = std::move(expressionAnalyze(lexemes, ptr, scope));
@@ -965,8 +979,8 @@ public:
                         case CPlus::For: {
                             LexicalAnalyzer::Lexeme& cbBegin = lexemes[++ptr];
                             if (cbBegin.type != CPlus::Symbol || cbBegin.value != CPlus::ControlBlockBegin) {
-                                std::cerr << "Expecting ( at lexeme " << ptr << " for if stmt" << std::endl;
-                                return nullptr;
+                                err << "Expecting ( at lexeme " << ptr << " for if stmt";
+                                throw CPlus::CompileError(err.str());
                             }
                             ptr++;
                             std::shared_ptr<BaseASTNode> init = std::move(expressionAnalyze(lexemes, ptr, scope));
@@ -996,6 +1010,7 @@ public:
 
     static std::shared_ptr<BaseASTNode> expressionAnalyze(std::vector<LexicalAnalyzer::Lexeme>& lexemes, 
                                             size_t& ptr, std::shared_ptr<Scope> const &scope) {
+        std::stringstream err;
         std::stack<std::shared_ptr<BaseASTNode> > operatorStack; // 符号栈
         std::vector<std::shared_ptr<BaseASTNode> > postfix;      // 后缀表达式
         for (bool iterate = true; iterate; ptr++) {
@@ -1006,8 +1021,8 @@ public:
                     if (identifier != nullptr)
                         postfix.push_back(std::move(identifier));
                     else {
-                        std::cerr << "Unknown identifier id " << lexeme.value << " at lexeme " << ptr << std::endl;
-                        return nullptr;
+                        err << "Unknown identifier id " << lexeme.value << " at lexeme " << ptr;
+                        throw CPlus::CompileError(err.str());
                     }
                 } break;
                 case CPlus::LexemeType::IntConstant: {           // 将 int 常量推入后缀表达式
@@ -1140,8 +1155,8 @@ public:
                         case CPlus::Negative: {
                             // 这几个一元运算符只处理右侧
                             if (operatorStack.size() < 1) {
-                                std::cerr << "Not enough operand for single op. ptr=" << ptr << std::endl;
-                                return nullptr;
+                                err << "Not enough operand for single op. ptr=" << ptr;
+                                throw CPlus::CompileError(err.str());
                             }
                             std::shared_ptr<BaseASTNode> right = std::move(operatorStack.top());
                             operatorStack.pop();
@@ -1149,8 +1164,8 @@ public:
                         } break;
                         default: {
                             if (operatorStack.size() < 2) {
-                                std::cerr << "Not enough operand for binary op. ptr=" << ptr << std::endl;
-                                return nullptr;
+                                err << "Not enough operand for binary op. ptr=" << ptr;
+                                throw CPlus::CompileError(err.str());
                             }
                             std::shared_ptr<BaseASTNode> right = std::move(operatorStack.top());
                             operatorStack.pop();
@@ -1167,26 +1182,25 @@ public:
                 operatorStack.push(std::move(node));
         }
         if (operatorStack.size() > 1) {
-            std::cerr << "Unexpected size for final expr stack, size: " << operatorStack.size() << std::endl;
-            return nullptr;
+            err << "Unexpected size for final expr stack, size: " << operatorStack.size();
+            throw CPlus::CompileError(err.str());
         }
         return operatorStack.empty() ? std::make_shared<BaseASTNode>() : std::move(operatorStack.top());
     }
 
-    bool analyze() {
+    void analyze() {
         if (!this->lex->isAnalyzed())
-            return false;
-        if (this->analyzed)
-            return false;
-        this->analyzed = true;
+            throw CPlus::CompileError("Syntax analyzer received an not well analyzed lexical analysis result.");
+        if (this->analyzed) return;
+        std::stringstream err;
         uint32_t baseOffset = CPlus::GlobalVariablesInitialBaseOffset;
         std::vector<LexicalAnalyzer::Lexeme> lexemes = this->lex->getLexemesRef();
         for (size_t ptr = 0; ptr < lexemes.size();) {
             // 需要在最外层处理的只有 int 开头的声明了
             if (lexemes[ptr].type == CPlus::Keyword && lexemes[ptr].value == CPlus::Int) {
                 if (ptr + 2 >= lexemes.size()) {
-                    std::cerr << "Unexpected position of int at lexeme " << ptr << std::endl;
-                    return false;
+                    err << "Unexpected position of int at lexeme " << ptr;
+                    throw CPlus::CompileError(err.str());
                 }
                 // 函数解析
                 if (lexemes[ptr + 2].type == CPlus::Symbol && lexemes[ptr + 2].value == CPlus::FunctionCallDefBegin) {
@@ -1198,7 +1212,10 @@ public:
                         globalScope->setIdentifier(id, funcIdentifier);
                         globalScope->setFunction(id, std::move(func));
                     }
-                    else return false;
+                    else {
+                        err << "Malformed function at " << ptr << ", whose parse result is null.";
+                        throw CPlus::CompileError(err.str());
+                    }
                 }
                 // 变量解析
                 else {
@@ -1212,11 +1229,10 @@ public:
                 }
             }
             else {
-                std::cerr << "Unexpected lexeme {type:" << lexemes[ptr].type << ",value:" << lexemes[ptr].value << "} at lexeme " << ptr << std::endl;
-                return false;
+                err << "Unexpected lexeme {type:" << lexemes[ptr].type << ",value:" << lexemes[ptr].value << "} at lexeme " << ptr;
+                throw CPlus::CompileError(err.str());
             }
         }
-        return true;
     }
 
     std::shared_ptr<Scope> getGlobalScope() {
@@ -1273,27 +1289,28 @@ class Runtime {
             case CPlus::BinaryExpressionASTNode: {
                 std::shared_ptr<SyntaxAnalyzer::BinaryExpressionASTNode> astNode = std::dynamic_pointer_cast<SyntaxAnalyzer::BinaryExpressionASTNode>(std::move(rawAstNode));
                 if (astNode->getOperatorRef() != CPlus::ArrayMemoryDereference) {
-                    std::cerr << "Invalid pointer evaluation: astNode is not array memory dereference." << std::endl;
-                    return std::make_pair(true, CPlus::NullPointer);
+                    throw CPlus::RuntimeError("Invalid pointer evaluation: astNode is not array memory dereference.");
                 }
                 std::pair<bool, uint32_t> leftHand = pointerEval(astNode->getLeftRef());
                 uint32_t address = leftHand.second + eval(astNode->getRightRef());
                 return std::make_pair(leftHand.first, address);
             } break;
         }
-        std::cerr << "Warning: unexpectedly reached undefined pointer evaluation!" << std::endl;
-        return std::make_pair(true, CPlus::NullPointer);
+        throw CPlus::RuntimeError("Unexpectedly reached undefined pointer evaluation!");
     }
 
     int eval(std::shared_ptr<SyntaxAnalyzer::BaseASTNode> rawAstNode, bool* shouldStop = nullptr) {
         if (rawAstNode == nullptr)
             return 0;
+        std::stringstream err;
 #define deref(pointer) (pointer.first ? this->globalMemory[pointer.second] : this->stackFrames.top()[pointer.second])
         switch (rawAstNode->getNodeType()) {
             case CPlus::IdentifierASTNode: {
                 std::shared_ptr<SyntaxAnalyzer::IdentifierASTNode> astNode = std::dynamic_pointer_cast<SyntaxAnalyzer::IdentifierASTNode>(std::move(rawAstNode));
-                if (!referenceable(astNode))
-                    std::cerr << "Invalid evaluation: not referenceable identifier " << astNode->getIdentifierId() << std::endl;
+                if (!referenceable(astNode)) {
+                    err << "Warning: invalid evaluation: not referenceable identifier " << astNode->getIdentifierId();
+                    throw CPlus::RuntimeError(err.str());
+                }
                 std::pair<bool, uint32_t> pointer = pointerEval(astNode);
                 return deref(pointer);
             } break;
@@ -1378,15 +1395,19 @@ class Runtime {
                 if (!SyntaxAnalyzer::IdentifierASTNode::isThisBuiltInObject(astNode->getLeftRef(), CPlus::Cin))
                     eval(astNode->getLeftRef());
                 if (referenceable(astNode->getRightRef())) {
-                    if (this->in.empty())
-                        std::cerr << "Runtime exception: not sufficient input." << std::endl;
+                    if (this->in.empty()) {
+                        err << "Not sufficient input.";
+                        throw CPlus::RuntimeError(err.str());
+                    }
                     else {
                         std::pair<bool, uint32_t> pointer = pointerEval(astNode->getRightRef());
                         deref(pointer) = this->in.front();
                         this->in.pop();
                     }
-                } else
-                    std::cerr << "Invalid cin to: not referenceable RHS." << std::endl;
+                } else {
+                    err << "Invalid cin to: not referenceable RHS.";
+                    throw CPlus::RuntimeError(err.str());
+                }
                 return 0;
             } break;
             case CPlus::Assign: {
@@ -1396,13 +1417,16 @@ class Runtime {
                     deref(pointer) = value;
                     return value;
                 } else {
-                    std::cerr << "Invalid assignment: LHS is not referenceable." << std::endl;
+                    err << "Invalid assignment: LHS is not referenceable.";
+                    throw CPlus::RuntimeError(err.str());
                     return 0;
                 }
             } break;
             case CPlus::ArrayMemoryDereference: {
-                if (!referenceable(astNode))
-                    std::cerr << "Invalid dereference: not referenceable LHS" << std::endl;
+                if (!referenceable(astNode)) {
+                    err << "Invalid dereference: not referenceable LHS";
+                    throw CPlus::RuntimeError(err.str());
+                }
                 std::pair<bool, uint32_t> pointer = pointerEval(astNode);
                 return deref(pointer);
             } break;
@@ -1480,8 +1504,8 @@ class Runtime {
             default:
                 break;
         }
-        std::cerr << "Warning: Unexpectedly reached undefined evaluation.\n" << std::endl;
-        return -1;
+        err << "Warning: Unexpectedly reached undefined evaluation.";
+        throw CPlus::RuntimeError(err.str());
     }
 public:
     Runtime(std::shared_ptr<SyntaxAnalyzer::Scope> globalScope,
@@ -1497,6 +1521,7 @@ public:
     ~Runtime() {}
 
     int callFunc(int funcId, std::vector<int> const &args, int const esp) {
+        std::stringstream err;
         std::shared_ptr<SyntaxAnalyzer::Function> func = this->globalScope->lookupFunc(funcId);
         if (func != nullptr) {
             bool shouldStop = false;
@@ -1515,8 +1540,8 @@ public:
             return retVal;
         }
         else {
-            std::cerr << "Fatal: function " << funcId << " not found!" << std::endl;
-            return -1;
+            err << "Fatal: function " << funcId << " not found!";
+            throw CPlus::RuntimeError(err.str());
         }
     }
 
@@ -1536,21 +1561,18 @@ int main() {
     }
     std::stringstream testCpp;
     testCpp << std::cin.rdbuf();
+    try {
     std::shared_ptr<LexicalAnalyzer> lex = std::make_shared<LexicalAnalyzer>(testCpp.str());
-    if (lex->analyze()) {
-        std::shared_ptr<SyntaxAnalyzer> syntx = std::make_shared<SyntaxAnalyzer>(lex);
-        if (syntx->analyze()) {
+    std::shared_ptr<SyntaxAnalyzer> syntx = std::make_shared<SyntaxAnalyzer>(lex);
+        try {
             std::shared_ptr<Runtime> rt = std::make_shared<Runtime>(syntx->getGlobalScope(), inputData, std::cout);
             return rt->callFunc(CPlus::Main);
+        } catch (CPlus::RuntimeError& err) {
+            std::cerr << "Runtime error: \n  " << err.what() << std::endl;
+            return -1;
         }
-        else {            
-            std::cerr << "Failed to do syntax analysis!" << std::endl;
-            return -2;
-        }
+    } catch (CPlus::CompileError& err) {
+        std::cerr << "Compile error: \n  " << err.what() << std::endl;
+        return -2;
     }
-    else {
-        std::cerr << "Failed to do lexical analysis!" << std::endl;
-        return -1;
-    }
-    return 0;
 }
