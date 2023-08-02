@@ -213,21 +213,19 @@ int main() {
     debugAST(y);
     std::cerr << "EndExpressionAnalyze,ptr=" << ptr << std::endl;
     */
-    if (s->analyze()) {
-        std::cerr << "Build succeeded!" << std::endl;
-        bool first = true;
-        std::cout << "{";
-        for (auto it = s->getGlobalScope()->funcBegin(); it != s->getGlobalScope()->funcEnd(); it++) {
-            auto f = (*it).second;
-            if (!first) std::cout << ",";
-            first = false;
-            std::cout << "\"" << revMap[f->getFuncId()] << "\":{\"id\":" << f->getFuncId() << ",\"name\":\"" << revMap[f->getFuncId()]
-                      << "\",\"stackSize\":" << f->getMaxStackSizeRef() << ",\"ast\":";
-            auto t = std::dynamic_pointer_cast<SyntaxAnalyzer::BaseASTNode>
-                (f->getStatementsRef());
-            std::cout << debugAST(t,false) << "}";
-        }
-        std::cout << "}";
+    s->analyze();
+    std::cerr << "Build succeeded!" << std::endl;
+    bool first = true;
+    std::cout << "{";
+    for (auto it = s->getGlobalScope()->funcBegin(); it != s->getGlobalScope()->funcEnd(); it++) {
+        auto f = (*it).second;
+        if (!first) std::cout << ",";
+        first = false;
+        std::cout << "\"" << revMap[f->getFuncId()] << "\":{\"id\":" << f->getFuncId() << ",\"name\":\"" << revMap[f->getFuncId()]
+                    << "\",\"stackSize\":" << f->getMaxStackSizeRef() << ",\"ast\":";
+        auto t = std::dynamic_pointer_cast<SyntaxAnalyzer::BaseASTNode>
+            (f->getStatementsRef());
+        std::cout << debugAST(t,false) << "}";
     }
-    
+    std::cout << "}";
 }
