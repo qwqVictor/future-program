@@ -433,6 +433,7 @@ public:
         if (this->analyzed) return;
         this->parseTokens();
         this->resolveLexemeTypes();
+        this->tokenizer = nullptr; // cleanup
         this->analyzed = true;
     }
 
@@ -1232,6 +1233,7 @@ public:
                 throw CPlus::CompileError(err.str());
             }
         }
+        this->lex = nullptr;
     }
 
     std::shared_ptr<Scope> getGlobalScope() {
@@ -1564,6 +1566,7 @@ int main() {
     std::shared_ptr<LexicalAnalyzer> lex = std::make_shared<LexicalAnalyzer>(testCpp.str());
     lex->analyze();
     std::shared_ptr<SyntaxAnalyzer> syntx = std::make_shared<SyntaxAnalyzer>(lex);
+    lex = nullptr;
     syntx->analyze();
         try {
             std::shared_ptr<Runtime> rt = std::make_shared<Runtime>(syntx->getGlobalScope(), inputData, std::cout);
