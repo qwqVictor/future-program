@@ -1563,11 +1563,11 @@ int main() {
     std::stringstream testCpp;
     testCpp << std::cin.rdbuf();
     try {
-    std::shared_ptr<LexicalAnalyzer> lex = std::make_shared<LexicalAnalyzer>(testCpp.str());
-    lex->analyze();
-    std::shared_ptr<SyntaxAnalyzer> syntx = std::make_shared<SyntaxAnalyzer>(lex);
-    lex = nullptr;
-    syntx->analyze();
+        std::shared_ptr<LexicalAnalyzer> lex = std::make_shared<LexicalAnalyzer>(testCpp.str());
+        lex->analyze();
+        std::shared_ptr<SyntaxAnalyzer> syntx = std::make_shared<SyntaxAnalyzer>(lex);
+        lex = nullptr;
+        syntx->analyze();
         try {
             std::shared_ptr<Runtime> rt = std::make_shared<Runtime>(syntx->getGlobalScope(), inputData, std::cout);
             return rt->callFunc(CPlus::Main);
